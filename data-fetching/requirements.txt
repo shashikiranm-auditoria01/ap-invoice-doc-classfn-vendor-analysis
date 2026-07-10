@@ -1,3 +1,14 @@
-fastapi
-httpx
+# Pull scripts (ap_invoice_data.py, ap_invoice_mismatch_data.py)
+requests
+pandas
 openpyxl
+
+# Data-fetching backend (server.py)
+fastapi
+uvicorn
+httpx
+boto3                 # S3 attachment loading (/api/attachments)
+
+# Optional — direct prod-DB connection instead of Metabase (set DB_URL in .env)
+# sqlalchemy
+# pymysql

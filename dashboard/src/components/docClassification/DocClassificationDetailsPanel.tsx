@@ -484,7 +484,7 @@ export function DocClassificationDetailsPanel({
                   : 'border-transparent text-slate-500 hover:text-slate-700'
               }`}
             >
-              JSON Data
+              NLU Extraction
             </button>
             <button
               onClick={() => setActiveTab('extracted')}
@@ -494,7 +494,7 @@ export function DocClassificationDetailsPanel({
                   : 'border-transparent text-slate-500 hover:text-slate-700'
               }`}
             >
-              Extracted Data
+              Vendor Name Extraction
             </button>
             <button
               onClick={() => setActiveTab('sorhintstab')}

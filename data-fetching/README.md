@@ -13,13 +13,50 @@ dashboard reads. `app_def_code = 'VIDE'` (the AP‑Invoice application code) is 
 >   The dashboard also has a `VITE_DATA_API_URL` seam so it can call a live backend instead of reading
 >   the generated `.xlsx` (see the top‑level README).
 
+## Two ways to feed the dashboard
+
+1. **Offline (default):** run a pull script → get an `.xlsx` → drop it in `dashboard/public/data/` + add a
+   `manifest.json` entry (steps below).
+2. **Live backend:** run **`server.py`** and point the dashboard's env at it — the app fetches on demand,
+   no `.xlsx` step. This is the same Metabase-API approach, and it also serves SOR and S3 attachments.
+
+### Live backend — `server.py`
+
+```bash
+cd data-fetching
+pip install -r requirements.txt
+# fill .env (Metabase creds; optionally DB_URL for prod DB, and S3_BUCKET/AWS creds for attachments)
+uvicorn server:app --port 8787          # or: python3 server.py
+```
+
+Then in `dashboard/.env.local`:
+
+```dotenv
+VITE_DATA_API_URL=http://localhost:8787
+VITE_SOR_API_URL=http://localhost:8787
+VITE_ATTACHMENT_API_URL=http://localhost:8787/api
+```
+
+Endpoints (match the frontend seams exactly):
+
+| Endpoint | Purpose |
+|---|---|
+| `POST /api/get_data` | Regular / Mismatch pull for a tenant + date range (reuses the scripts' SQL). Body `{kind, scenario, tenant_id, app_def_code, date_from, date_to}`. |
+| `POST /api/sor/lookup` | Lazy per-document SOR enrichment (SOR Hints / Master SOR tabs). |
+| `GET /api/attachments?s3Key=…` | Streams the invoice PDF from **AWS S3** (for `extractedFileS3Location` / `s3Location`). |
+| `GET /api/health` | Status + which data source is active. |
+
+**Metabase now → prod DB later:** `server.py` runs the SQL via the Metabase API by default. Set `DB_URL`
+in `.env` (a SQLAlchemy URL) and the *same* SQL runs directly against the prod DB instead — no frontend
+change. **AWS attachments:** set `S3_BUCKET` + AWS creds and the details panel can load PDFs from S3.
+
 ## Files
 
 | File | Produces | For which dashboard mode |
 |---|---|---|
-| `ap_invoice_data.py` | `AP_Invoice_Tenant_<id>.xlsx` — classification + vendor + SOR columns | **Daily Data Review** (`kind: regular`) |
+| `ap_invoice_data.py` | `AP_Invoice_Tenant_<id>.xlsx` — classification + vendor + SOR columns | **Regular DA Analysis** (`kind: regular`) |
 | `ap_invoice_mismatch_data.py` | `AP_Invoice_Mismatch_Report.xlsx` — one sheet per scenario (`RecordType_Mismatch`, `VendorName_Mismatch`, …) | **Mismatch Review** (`kind: mismatch`) |
-| `pull_tenant_674288818571972608.py` | single‑tenant example wrapper | Daily Data Review |
+| `server.py` | **Live backend** — the endpoints the dashboard calls (no `.xlsx` step) | both (live) |
 | `query.md` | the customer‑edit mismatch SQL + a plain‑English explanation of the 3 scenarios | reference |
 | `sample_metabase_script.py` | minimal Metabase auth/query example | reference |
 | `.env` | your `USERNAME` / `PASSWORD` (committed **empty**) | credentials |

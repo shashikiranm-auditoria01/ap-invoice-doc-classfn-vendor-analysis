@@ -210,24 +210,36 @@ Chosen at the **Get Data** gate:
 
 ## Environment variables & the backend seam
 
-The dashboard runs fully on bundled data with **no env vars**. Two optional flags wire it to a live
-backend when you're ready — set them in `dashboard/.env.local` (git‑ignored):
+The dashboard runs fully on bundled data with **no env vars**. Optional flags wire it to the live
+**data-fetching backend** (`data-fetching/server.py`) — set them in `dashboard/.env.local` (git‑ignored):
 
 | Variable | Effect |
 |---|---|
-| `VITE_DATA_API_URL` | When set, **Get Data** POSTs `{kind, scenario, tenant_id, app_def_code, date_from, date_to}` to `{URL}/api/get_data` (live Metabase pull) instead of reading bundled `.xlsx`. Same UI. |
-| `VITE_SOR_API_URL` | When set, the **SOR Hints / Master SOR Record** tabs lazily fetch SOR data per document from `{URL}/api/sor/lookup` (only for docs that arrived without SOR). Cached per document. |
+| `VITE_DATA_API_URL` | **Get Data** POSTs `{kind, scenario, tenant_id, app_def_code, date_from, date_to}` to `{URL}/api/get_data` (live Metabase pull, or prod DB) instead of reading bundled `.xlsx`. Same UI. |
+| `VITE_SOR_API_URL` | The **SOR Hints / Master SOR Record** tabs lazily fetch SOR data per document from `{URL}/api/sor/lookup` (only for docs without SOR). Cached per document. |
+| `VITE_ATTACHMENT_API_URL` | The details panel loads a doc's invoice **PDF from AWS S3** via `{URL}/attachments?s3Key=<extractedFileS3Location \| s3Location>` (point at `{backend}/api`). |
 | `VITE_EMAIL_BACKEND_URL` | Email backend base URL (default `http://localhost:5001`). |
 
-This is the **incremental rollout** path: ship the live base pull first (`VITE_DATA_API_URL`), add SOR
-later (`VITE_SOR_API_URL`) — neither blocks the other, and the bundled path remains the dev/fallback.
-SOR backend contract:
+All three data endpoints are served by **`data-fetching/server.py`** (FastAPI). Run it with
+`cd data-fetching && uvicorn server:app --port 8787`, then set the three URLs to `http://localhost:8787`
+(attachment URL to `http://localhost:8787/api`). See [`data-fetching/README.md`](data-fetching/README.md).
+
+**Incremental rollout / prod DB:** ship the live pull first (`VITE_DATA_API_URL`), add SOR + attachments
+when ready — none blocks the others, and the bundled path stays the dev/fallback. `server.py` uses the
+**Metabase API** by default; set `DB_URL` in `data-fetching/.env` and the *same* SQL runs against the
+**prod DB** directly — no frontend change. Endpoint contracts:
 
 ```
+POST {VITE_DATA_API_URL}/api/get_data
+{ kind:'regular'|'mismatch', scenario?, tenant_id, app_def_code:'VIDE', date_from, date_to }
+→ [ { <row keyed by the .xlsx column headers> }, ... ]
+
 POST {VITE_SOR_API_URL}/api/sor/lookup
 { tenantId, lookups: [{ documentId, normalizedVendorName, extractedVendorName }] }
 → { [documentId]: { sorHintsNormalized, sorHintsExtracted, sorMasterNormalized,
                     sorMasterExtracted, systemHintsNormalized, systemHintsExtracted } }
+
+GET  {VITE_ATTACHMENT_API_URL}/attachments?s3Key=<key>   → raw PDF bytes (application/pdf)
 ```
 
 ---
