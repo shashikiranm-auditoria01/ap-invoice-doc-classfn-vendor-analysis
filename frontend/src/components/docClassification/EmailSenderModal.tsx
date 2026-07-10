@@ -298,7 +298,7 @@ export function EmailSenderModal({ pdfs, preselectPdfName, onClose }: EmailSende
 
         {backendUp === false && (
           <div className="px-5 py-2 bg-amber-50 border-b border-amber-200 text-xs text-amber-800">
-            Backend not reachable at <code className="font-mono">{EMAIL_BACKEND_URL}</code> — start it: <code className="font-mono">python3 email_backend.py</code>
+            Backend not reachable at <code className="font-mono">{EMAIL_BACKEND_URL}</code> — start it: <code className="font-mono">cd backend && uvicorn app:app --port 8787</code>
           </div>
         )}
 
@@ -372,7 +372,7 @@ export function EmailSenderModal({ pdfs, preselectPdfName, onClose }: EmailSende
                     ) : (
                       <button onClick={handleApSend} disabled={!apCanSend}
                         className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-md text-sm font-medium text-white bg-purple-600 hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                        title={backendUp === false ? 'Backend not reachable — start email_backend.py' : undefined}>
+                        title={backendUp === false ? 'Backend not reachable — start the backend (uvicorn app:app --port 8787)' : undefined}>
                         <Send className="w-4 h-4" /> Send to Gmail
                       </button>
                     )}
@@ -461,7 +461,7 @@ export function EmailSenderModal({ pdfs, preselectPdfName, onClose }: EmailSende
               ) : (
                 <button onClick={handleHdSend} disabled={hdRows.length === 0 || !hdSender.trim() || !hdPassword.trim() || backendUp === false}
                   className="w-full inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-md text-sm font-medium text-white bg-gradient-to-r from-purple-600 to-indigo-500 hover:from-purple-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                  title={backendUp === false ? 'Backend not reachable — start email_backend.py' : undefined}>
+                  title={backendUp === false ? 'Backend not reachable — start the backend (uvicorn app:app --port 8787)' : undefined}>
                   <Send className="w-4 h-4" /> Start Sending
                 </button>
               )}

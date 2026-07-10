@@ -5,7 +5,6 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "email-backend": "python3 email_backend.py",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview"

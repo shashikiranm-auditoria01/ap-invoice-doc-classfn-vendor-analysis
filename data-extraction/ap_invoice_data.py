@@ -800,9 +800,9 @@ def main():
     print(f"\n📋 Tenants : {ALL_TENANT_IDS}")
     print(f"   Date range: 2026-04-09 00:00:00  →  2026-04-10 23:59:59\n")
 
-    # Credentials + tenant come from the local .env (see .env in this folder). It is committed with
-    # EMPTY values — fill them before running. Anything missing is prompted for interactively.
-    env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.env')
+    # Credentials + tenant come from the repo-root .env (shared with the backend). It is committed
+    # with EMPTY values — fill them before running. Anything missing is prompted for interactively.
+    env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '.env')
     env_vars = {}
     if os.path.exists(env_path):
         with open(env_path) as f:

@@ -1,0 +1,4 @@
+# Data-extraction pull scripts (ap_invoice_data.py, ap_invoice_mismatch_data.py)
+requests
+pandas
+openpyxl

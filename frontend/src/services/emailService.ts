@@ -25,10 +25,10 @@ const API_TOKEN = import.meta.env.VITE_EMAIL_API_TOKEN as string | undefined;
 /** True when a backend send endpoint (with real attachments) is configured. */
 export const isEmailApiConfigured = API_BASE.length > 0;
 
-// ── Email backend (the working Gmail-SMTP sender, email_backend.py) ────────────────
+// ── Email backend (Gmail-SMTP sender, served by the consolidated backend/app.py) ────────────────
 // Default to the local backend; override with VITE_EMAIL_BACKEND_URL.
 export const EMAIL_BACKEND_URL =
-  ((import.meta.env.VITE_EMAIL_BACKEND_URL as string | undefined) || 'http://localhost:5001').replace(/\/+$/, '');
+  ((import.meta.env.VITE_EMAIL_BACKEND_URL as string | undefined) || 'http://localhost:8787').replace(/\/+$/, '');
 
 /**
  * fetch() with a hard timeout via AbortController, so a backend that accepts the socket but never
@@ -133,7 +133,7 @@ export async function sendSingleEmail(p: SingleSendPayload): Promise<SendResult>
     const j = await res.json().catch(() => ({}));
     return { sent: !!j.success, error: j.error };
   } catch (e) {
-    return { sent: false, error: e instanceof Error ? e.message : 'Network error — is the email backend running? (python3 email_backend.py)' };
+    return { sent: false, error: e instanceof Error ? e.message : 'Network error — is the backend running? (cd backend && uvicorn app:app --port 8787)' };
   }
 }
 

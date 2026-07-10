@@ -1,0 +1,9 @@
+# Backend service (app.py) — data pull + SOR + S3 attachments + email
+fastapi
+uvicorn
+httpx
+boto3                 # S3 attachment loading (/api/attachments)
+
+# Prod-DB path (DATA_SOURCE=proddb) — uncomment the driver for your DB
+sqlalchemy
+pymysql               # MySQL/MariaDB; swap for psycopg2-binary (Postgres), etc.

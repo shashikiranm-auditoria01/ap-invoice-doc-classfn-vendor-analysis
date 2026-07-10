@@ -1,54 +1,18 @@
-# Data Fetching — pulling AP Invoice data for a tenant
+# Data Extraction — pulling AP Invoice data for a tenant (offline)
 
-This is the **data‑fetching backend** for the dashboard. These Python scripts query **Metabase**
-(two instances) for a tenant + date range, run SOR post‑processing, and produce the `.xlsx` files the
-dashboard reads. `app_def_code = 'VIDE'` (the AP‑Invoice application code) is fixed in the queries.
+These Python scripts query **Metabase** (two instances) for a tenant + date range, run SOR
+post‑processing, and produce the `.xlsx` files the dashboard reads. `app_def_code = 'VIDE'` (the
+AP‑Invoice application code) is fixed in the queries.
 
-> **How fetching works today vs later.**
-> - **Now:** we fetch through the **Metabase API** — `ap_invoice_data.py` / `ap_invoice_mismatch_data.py`
->   run the SQL against Metabase. **`queries/mismatch_review.sql` is that SQL** (the customer‑edit mismatch query) with a
->   plain‑English explanation of the three scenarios — it is the source‑of‑truth query, not a stray doc.
-> - **Later:** we may switch to a **direct prod‑DB connection**. Only the connection + execution layer
->   changes — the same `queries/mismatch_review.sql` SQL and the same output `.xlsx` shape (and the dashboard) stay put.
->   The dashboard also has a `VITE_DATA_API_URL` seam so it can call a live backend instead of reading
->   the generated `.xlsx` (see the top‑level README).
-
-## Two ways to feed the dashboard
-
-1. **Offline (default):** run a pull script → get an `.xlsx` → drop it in `dashboard/public/data/` + add a
-   `manifest.json` entry (steps below).
-2. **Live backend:** run **`server.py`** and point the dashboard's env at it — the app fetches on demand,
-   no `.xlsx` step. This is the same Metabase-API approach, and it also serves SOR and S3 attachments.
-
-### Live backend — `server.py`
-
-```bash
-cd data-fetching
-pip install -r requirements.txt
-# fill .env (Metabase creds; optionally DB_URL for prod DB, and S3_BUCKET/AWS creds for attachments)
-uvicorn server:app --port 8787          # or: python3 server.py
-```
-
-Then in `dashboard/.env.local`:
-
-```dotenv
-VITE_DATA_API_URL=http://localhost:8787
-VITE_SOR_API_URL=http://localhost:8787
-VITE_ATTACHMENT_API_URL=http://localhost:8787/api
-```
-
-Endpoints (match the frontend seams exactly):
-
-| Endpoint | Purpose |
-|---|---|
-| `POST /api/get_data` | Regular / Mismatch pull for a tenant + date range (reuses the scripts' SQL). Body `{kind, scenario, tenant_id, app_def_code, date_from, date_to}`. |
-| `POST /api/sor/lookup` | Lazy per-document SOR enrichment (SOR Hints / Master SOR tabs). |
-| `GET /api/attachments?s3Key=…` | Streams the invoice PDF from **AWS S3** (for `extractedFileS3Location` / `s3Location`). |
-| `GET /api/health` | Status + which data source is active. |
-
-**Metabase now → prod DB later:** `server.py` runs the SQL via the Metabase API by default. Set `DB_URL`
-in `.env` (a SQLAlchemy URL) and the *same* SQL runs directly against the prod DB instead — no frontend
-change. **AWS attachments:** set `S3_BUCKET` + AWS creds and the details panel can load PDFs from S3.
+> **Two ways to feed the dashboard**
+> 1. **Offline (this folder):** run a script → get an `.xlsx` → drop it in `frontend/public/data/` + add a
+>    `manifest.json` entry (steps below).
+> 2. **Live backend:** run **`../backend/app.py`** and point the frontend's env at it — the app fetches on
+>    demand, no `.xlsx` step. Same Metabase-API approach; also serves SOR + S3 attachments + email, and
+>    connects to the prod DB via `DB_URL`/`TENANT_DB_MAP`. See [`../backend`](../backend) and the top‑level README.
+>
+> The customer‑edit mismatch SQL (source of truth) lives at
+> [`../backend/queries/mismatch_review.sql`](../backend/queries/mismatch_review.sql).
 
 ## Files
 
@@ -56,23 +20,21 @@ change. **AWS attachments:** set `S3_BUCKET` + AWS creds and the details panel c
 |---|---|---|
 | `ap_invoice_data.py` | `AP_Invoice_Tenant_<id>.xlsx` — classification + vendor + SOR columns | **Regular DA Analysis** (`kind: regular`) |
 | `ap_invoice_mismatch_data.py` | `AP_Invoice_Mismatch_Report.xlsx` — one sheet per scenario (`RecordType_Mismatch`, `VendorName_Mismatch`, …) | **Mismatch Review** (`kind: mismatch`) |
-| `server.py` | **Live backend** — the endpoints the dashboard calls (no `.xlsx` step) | both (live) |
-| `queries/mismatch_review.sql` | the customer‑edit mismatch SQL + a plain‑English explanation of the 3 scenarios | reference |
-| `smoke_test.py` | backend smoke test (MOCK mode — 11 checks, no credentials) | test |
 | `sample_metabase_script.py` | minimal Metabase auth/query example | reference |
-| `.env` | Metabase creds (`USERNAME_REGULAR`/`PASSWORD_REGULAR`/…) + optional `DB_URL`, `S3_BUCKET` — committed **empty** | credentials |
+
+Credentials live in the shared repo‑root **`.env`** (`USERNAME_REGULAR`/`PASSWORD_REGULAR`/… — committed empty).
 
 ## 1. Install
 
 ```bash
-cd data-fetching
+cd data-extraction
 python3 -m venv .venv && source .venv/bin/activate   # optional
 pip install -r requirements.txt
 ```
 
 ## 2. Credentials
 
-Edit **`.env`** (committed with empty values) and fill in your Metabase credentials — one pair per
+Edit the repo-root **`.env`** (committed with empty values) and fill in your Metabase credentials — one pair per
 instance — and optionally the tenant to pull:
 
 ```dotenv
@@ -116,8 +78,8 @@ SOR post‑processing, formats dates, and writes the `.xlsx`.
 
 ## 5. Wire the output into the dashboard
 
-1. Copy the produced `.xlsx` into `../dashboard/public/data/`.
-2. Add (or update) an entry in `../dashboard/public/data/manifest.json` — the **Get Data** gate reads
+1. Copy the produced `.xlsx` into `../frontend/public/data/`.
+2. Add (or update) an entry in `../frontend/public/data/manifest.json` — the **Get Data** gate reads
    this to populate the tenant dropdown, date coverage, and (for mismatch) scenario counts:
 
    ```jsonc
@@ -154,7 +116,7 @@ SOR post‑processing, formats dates, and writes the `.xlsx`.
 
 3. Reload the dashboard — the new tenant/dataset now appears in the gate.
 
-## The three mismatch scenarios (from `queries/mismatch_review.sql`)
+## The three mismatch scenarios (from `../backend/queries/mismatch_review.sql`)
 
 Customer edits come from `sor.wk_result_edits`: `original_json` = the value AAI/NLU produced,
 `final_json` = the value the customer edited to. The report has one sheet per scenario:
@@ -175,8 +137,9 @@ integer range. The scripts write them as **text** cells. If you hand‑edit an `
 columns formatted as Text — the dashboard rejects uploads whose ID columns arrive as numbers
 (precision would already be lost).
 
-## Notes on the live backend (future)
+## Live backend (instead of the offline `.xlsx` step)
 
-When a backend endpoint is stood up, the dashboard can pull live instead of from bundled files by
-setting `VITE_DATA_API_URL` (see the top‑level README). The backend should run the same queries as
-these scripts and accept `{ kind, scenario, tenant_id, app_def_code, date_from, date_to }`.
+The backend at [`../backend/app.py`](../backend) already runs these same queries on demand and serves
+them to the dashboard via `POST /api/get_data` (plus SOR, S3 attachments, and email). Point the
+frontend at it with `VITE_DATA_API_URL` and connect it to the prod DB with `DB_URL`/`TENANT_DB_MAP` —
+see the top‑level README's **"Environment variables & the backend"** section.

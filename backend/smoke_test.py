@@ -1,7 +1,7 @@
 """
-Smoke test for the data-fetching backend (server.py) — runs in MOCK mode, no Metabase/DB/S3 needed.
+Smoke test for the backend (app.py) — runs in MOCK mode, no Metabase/DB/S3 needed.
 
-    cd data-fetching
+    cd backend
     pip install fastapi httpx        # (uvicorn/boto3/pandas NOT required for this test)
     python3 smoke_test.py
 
@@ -12,7 +12,7 @@ import os
 os.environ["MOCK"] = "1"  # must be set before importing server
 
 from fastapi.testclient import TestClient  # noqa: E402
-import server  # noqa: E402
+import app as server  # noqa: E402
 
 client = TestClient(server.app)
 passed = failed = 0
@@ -24,7 +24,7 @@ def check(name, cond):
     else:
         failed += 1; print(f"  FAIL  {name}")
 
-print("Data-fetching backend smoke test (MOCK mode)\n")
+print("Backend smoke test (MOCK mode)\n")
 
 # health
 r = client.get("/api/health")

@@ -1,5 +1,5 @@
 """
-AP Invoice — Data-Fetching Backend (FastAPI)
+AP Invoice — Backend (FastAPI): data + SOR + S3 attachments + email
 ════════════════════════════════════════════════════════════════════════════════════════════════
 Exposes the endpoints the dashboard's frontend seams call, so the app can run LIVE instead of from
 bundled .xlsx. Same Metabase-API approach as the pull scripts (reuses their SQL); ready to swap to a
@@ -26,7 +26,7 @@ Run
 ───
   pip install -r requirements.txt
   # fill .env (USERNAME_REGULAR/PASSWORD_REGULAR/USERNAME_ENT/PASSWORD_ENT, AWS creds, optional DB_URL)
-  uvicorn server:app --port 8787         # or: python3 server.py
+  uvicorn app:app --port 8787            # or: python3 app.py
 
 Data source: Metabase now → prod DB later
 ──────────────────────────────────────────
@@ -37,14 +37,29 @@ import os
 import mimetypes
 from typing import Optional
 
+import re
+import sys
+import json
+import smtplib
+import base64 as _b64
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+from email.mime.base import MIMEBase
+from email import encoders as _encoders
+
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 from pydantic import BaseModel
 import httpx
 
-# The REAL SQL templates live in the pull scripts; imported LAZILY inside get_data so the server
-# (and /api/health) start without pandas/requests installed — only the live pull path needs them.
+# The pull scripts (which own the source-of-truth SQL) live in ../data-extraction.
+_EXTRACTION_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data-extraction")
+if _EXTRACTION_DIR not in sys.path:
+    sys.path.insert(0, _EXTRACTION_DIR)
+
+# SQL templates imported LAZILY inside get_data so the backend (and /api/health, email, S3) start
+# without pandas/requests — only the live pull path needs them.
 def _sql_templates():
     from ap_invoice_data import SQL_QUERY_TEMPLATE as regular
     from ap_invoice_mismatch_data import SQL_QUERY_TEMPLATE as mismatch
@@ -52,9 +67,9 @@ def _sql_templates():
 
 MOCK = os.environ.get("MOCK") == "1"  # smoke-test mode: return a tiny sample instead of querying
 
-# ── Config (from environment / .env) ─────────────────────────────────────────────────────────────
+# ── Config (from the repo-root .env) ──────────────────────────────────────────────────────────────
 def _load_env():
-    env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+    env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".env")
     if os.path.exists(env_path):
         with open(env_path) as f:
             for line in f:
@@ -70,11 +85,26 @@ METABASE_INSTANCES = [
     {"name": "enterprise", "url": "https://metabase-ent1.auditoria.ai",
      "user": os.environ.get("USERNAME_ENT", ""), "pw": os.environ.get("PASSWORD_ENT", "")},
 ]
-DB_URL = os.environ.get("DB_URL", "")              # set → query prod DB directly instead of Metabase
+
+# ── Data source: 'metabase' (default) | 'proddb' ──────────────────────────────────────────────────
+DATA_SOURCE = os.environ.get("DATA_SOURCE", "proddb" if os.environ.get("DB_URL") or os.environ.get("TENANT_DB_MAP") else "metabase").lower()
+DB_URL = os.environ.get("DB_URL", "")              # single prod DB / read-replica DSN (all tenants)
+# Optional tenant→DSN routing for a SHARDED prod DB: {"665247456933969920": "mysql+pymysql://…", …}
+try:
+    TENANT_DB_MAP = json.loads(os.environ.get("TENANT_DB_MAP", "") or "{}")
+except json.JSONDecodeError:
+    TENANT_DB_MAP = {}
+
 S3_BUCKET = os.environ.get("S3_BUCKET", "")        # default bucket if an s3Key has no bucket prefix
 AWS_REGION = os.environ.get("AWS_REGION", "us-east-1")
 
-app = FastAPI(title="AP Invoice Data-Fetching Backend")
+# SMTP (Email Sender) — same config surface as the standalone email backend.
+SMTP_HOST = os.environ.get("MAIL_SMTP_HOST", "smtp.gmail.com")
+SMTP_PORT = int(os.environ.get("MAIL_SMTP_PORT", "587"))
+USE_STARTTLS = os.environ.get("MAIL_STARTTLS", "true").lower() != "false"
+SKIP_LOGIN = os.environ.get("MAIL_SKIP_LOGIN", "false").lower() == "true"
+
+app = FastAPI(title="AP Invoice Backend (data + SOR + attachments + email)")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True,
                    allow_methods=["*"], allow_headers=["*"])
 
@@ -125,13 +155,34 @@ def _mb_databases(inst: dict) -> list[int]:
     pref = [db["id"] for db in dbs if any(k in db["name"].lower() for k in ("sor", "shard"))]
     return pref or [db["id"] for db in dbs]
 
-def run_sql(sql: str) -> list[dict]:
-    """Run a SELECT and return column-keyed row dicts. Prod DB if DB_URL set, else probe Metabase."""
-    if DB_URL:
-        # Prod-DB path — same SQL, direct connection.
-        from sqlalchemy import create_engine, text  # lazy import; only needed on this path
-        eng = create_engine(DB_URL)
-        with eng.connect() as conn:
+# ── Prod-DB: one pooled engine per DSN, created lazily and reused across requests ────────────────
+_engines: dict = {}
+
+def _engine_for(dsn: str):
+    from sqlalchemy import create_engine  # lazy import; only on the prod-DB path
+    eng = _engines.get(dsn)
+    if eng is None:
+        # pool_pre_ping avoids stale connections; a small pool is plenty for a review tool.
+        eng = create_engine(dsn, pool_pre_ping=True, pool_size=5, max_overflow=5, pool_recycle=1800)
+        _engines[dsn] = eng
+    return eng
+
+def _dsn_for_tenant(tenant_id: str) -> Optional[str]:
+    """Resolve the prod DSN for a tenant: per-tenant shard map wins, else the single DB_URL."""
+    return TENANT_DB_MAP.get(tenant_id) or (DB_URL or None)
+
+def run_sql(sql: str, tenant_id: Optional[str] = None) -> list[dict]:
+    """Run a SELECT and return column-keyed row dicts.
+
+    DATA_SOURCE='proddb' → run against the tenant's prod DB (sharded via TENANT_DB_MAP, or the single
+    DB_URL) using a pooled engine. Otherwise probe Metabase (dev/legacy). Same SQL either way.
+    """
+    if DATA_SOURCE == "proddb":
+        from sqlalchemy import text
+        dsn = _dsn_for_tenant(tenant_id or "")
+        if not dsn:
+            raise RuntimeError("No prod DB configured — set DB_URL or TENANT_DB_MAP in .env")
+        with _engine_for(dsn).connect() as conn:
             res = conn.execute(text(sql))
             return [dict(r._mapping) for r in res]
     # Metabase path — try each instance's SOR/shard DBs until one returns rows.
@@ -175,10 +226,20 @@ def _mock_rows(req: "GetDataRequest") -> list[dict]:
     return [base]
 
 
+# The SQL templates use literal placeholders (not bound params), so validate the values that get
+# interpolated to eliminate any injection surface. Tenant IDs are 18-digit snowflakes; dates are a
+# fixed 'YYYY-MM-DD[ HH:MM:SS]' shape.
+_TENANT_RE = re.compile(r"^\d{1,25}$")
+_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}( \d{2}:\d{2}:\d{2})?$")
+
 @app.post("/api/get_data")
 def get_data(req: GetDataRequest):
     if MOCK:
         return _mock_rows(req)
+    if not _TENANT_RE.match(req.tenant_id or ""):
+        raise HTTPException(status_code=400, detail="tenant_id must be numeric (18-digit snowflake).")
+    if not _DATE_RE.match(req.date_from or "") or not _DATE_RE.match(req.date_to or ""):
+        raise HTTPException(status_code=400, detail="date_from/date_to must be 'YYYY-MM-DD[ HH:MM:SS]'.")
     regular_sql, mismatch_sql = _sql_templates()
     template = mismatch_sql if req.kind == "mismatch" else regular_sql
     sql = (template
@@ -192,7 +253,7 @@ def get_data(req: GetDataRequest):
             head, _, tail = sql.rpartition("ORDER BY")
             sql = head + extra + " ORDER BY " + tail
     try:
-        rows = run_sql(sql)
+        rows = run_sql(sql, tenant_id=req.tenant_id)
     except Exception as e:  # noqa: BLE001 — surface any driver/Metabase error to the client
         raise HTTPException(status_code=502, detail=f"Data source error: {e}")
     return rows
@@ -224,7 +285,7 @@ def _sor_rows(tenant_id: str, vendor: str, table: str) -> str:
         f"FROM sor.{table} WHERE tenant_id='{_esc(tenant_id)}' "
         f"AND (LOWER(coalesced_name)=LOWER('{v}') OR LOWER(vendor_name)=LOWER('{v}'))"
     )
-    rows = run_sql(sql)
+    rows = run_sql(sql, tenant_id=tenant_id)
     return (rows[0].get("matches") if rows else None) or "[]"
 
 @app.post("/api/sor/lookup")
@@ -278,13 +339,104 @@ def get_attachment(s3Key: str = Query(..., description="S3 key, e.g. extractedFi
                     headers={"Content-Disposition": f'inline; filename="{name}"'})
 
 
+# ── Email Sender (folded in from the standalone email backend) ────────────────────────────────────
+def _smtp_send(sender: str, password: str, recipient: str, msg: MIMEMultipart):
+    server = smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=30)
+    try:
+        if USE_STARTTLS:
+            server.starttls()
+        if password and not SKIP_LOGIN:
+            server.login(sender, password)
+        server.sendmail(sender, [r.strip() for r in recipient.split(",") if r.strip()], msg.as_string())
+    finally:
+        try: server.quit()
+        except Exception: pass
+
+class SingleEmail(BaseModel):
+    recipient_email: str = ""
+    sender_email: str = ""
+    sender_password: str = ""
+    email_subject: str = "Document Delivery"
+    email_body: str = "Please find the attached document."
+    file: Optional[dict] = None            # { name, data(base64) }
+
+@app.post("/api/send_email")
+def send_email(req: SingleEmail):
+    """Single email with an optional PDF attachment (AP Invoice mode)."""
+    if not req.recipient_email.strip() or not req.sender_email.strip():
+        return {"success": False, "error": "Missing sender or recipient"}
+    msg = MIMEMultipart()
+    msg["From"], msg["To"], msg["Subject"] = req.sender_email, req.recipient_email, req.email_subject
+    msg.attach(MIMEText(req.email_body, "plain"))
+    fi = req.file or {}
+    if fi.get("data"):
+        try:
+            part = MIMEBase("application", "pdf")
+            part.set_payload(_b64.b64decode(fi["data"]))
+            _encoders.encode_base64(part)
+            part.add_header("Content-Disposition", f'attachment; filename="{fi.get("name") or "document.pdf"}"')
+            msg.attach(part)
+        except Exception:
+            return {"success": False, "error": f"Invalid base64 for {fi.get('name')}"}
+    try:
+        _smtp_send(req.sender_email, req.sender_password, req.recipient_email, msg)
+    except smtplib.SMTPAuthenticationError:
+        return {"success": False, "error": "Authentication failed. Use a Gmail App Password."}
+    except Exception as e:  # noqa: BLE001
+        return {"success": False, "status": "failed", "error": str(e)}
+    return {"success": True, "status": "sent", "message": "Email sent successfully"}
+
+class SimpleAttachment(BaseModel):
+    name: str = "document.pdf"
+    base64Data: str = ""
+    mimeType: Optional[str] = "application/pdf"
+
+class SimpleEmail(BaseModel):
+    sender_email: str = ""
+    app_password: str = ""
+    recipient: str = ""
+    subject: str = "No Subject"
+    body: str = ""
+    attachments: list[SimpleAttachment] = []
+
+@app.post("/api/email/send-simple")
+def send_simple(req: SimpleEmail):
+    """Email with any number of attachments (HelpDesk bulk mode)."""
+    if not req.sender_email.strip() or not req.recipient.strip():
+        return {"success": False, "error": "Missing sender or recipient"}
+    msg = MIMEMultipart()
+    msg["From"], msg["To"], msg["Subject"] = req.sender_email, req.recipient, req.subject
+    msg.attach(MIMEText(req.body, "plain"))
+    for att in req.attachments:
+        if not att.base64Data:
+            continue
+        try:
+            main, _, sub = (att.mimeType or "application/pdf").partition("/")
+            part = MIMEBase(main, sub or "octet-stream")
+            part.set_payload(_b64.b64decode(att.base64Data))
+            _encoders.encode_base64(part)
+            part.add_header("Content-Disposition", f'attachment; filename="{att.name}"')
+            msg.attach(part)
+        except Exception as e:  # noqa: BLE001
+            print(f"  Failed to attach {att.name}: {e}")
+    try:
+        _smtp_send(req.sender_email, req.app_password, req.recipient, msg)
+    except smtplib.SMTPAuthenticationError:
+        return {"success": False, "error": "Gmail authentication failed. Use an App Password."}
+    except Exception as e:  # noqa: BLE001
+        return {"success": False, "error": str(e)}
+    return {"success": True, "attachments_sent": len(req.attachments)}
+
+
 @app.get("/api/health")
 def health():
     return {
         "status": "ok",
-        "data_source": "prod-db" if DB_URL else "metabase",
+        "data_source": DATA_SOURCE,
+        "prod_db_configured": bool(DB_URL or TENANT_DB_MAP),
         "metabase_configured": any(i["user"] and i["pw"] for i in METABASE_INSTANCES),
         "s3_bucket": bool(S3_BUCKET),
+        "smtp_host": SMTP_HOST,
     }
 
 
