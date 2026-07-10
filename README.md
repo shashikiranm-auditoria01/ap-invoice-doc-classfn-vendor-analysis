@@ -66,14 +66,15 @@ ap-invoice-doc-classfn-vendor-analysis/
 │   ├── api/index.py              ← optional serverless entry (Vercel)
 │   ├── package.json, vite.config.ts, tailwind.config.js, tsconfig*.json
 │   └── vercel.json               ← deployment config
-├── data-fetching/                ← Python data pull (Metabase → .xlsx)
+├── data-fetching/                ← Python data pull (Metabase → .xlsx) + live backend
 │   ├── README.md                 ← how to pull data for ANY tenant → dashboard
-│   ├── ap_invoice_data.py        ← Daily Data Review pull (classification + vendor + SOR)
+│   ├── ap_invoice_data.py        ← Regular DA Analysis pull (classification + vendor + SOR)
 │   ├── ap_invoice_mismatch_data.py ← Mismatch Review pull (customer edits)
-│   ├── pull_tenant_674288818571972608.py ← single‑tenant pull example
-│   ├── query.md                  ← the customer‑edit mismatch SQL + explanation
+│   ├── server.py                 ← live backend: /api/get_data, /api/sor/lookup, /api/attachments
+│   ├── smoke_test.py             ← backend smoke test (MOCK mode, no creds)
+│   ├── queries/mismatch_review.sql ← the customer‑edit mismatch SQL (source of truth)
 │   ├── requirements.txt
-│   └── .env                      ← USERNAME / PASSWORD (committed EMPTY — fill before pulling)
+│   └── .env                      ← Metabase creds + optional prod‑DB / S3 (committed EMPTY)
 └── docs/
     └── workflow-architecture.html ← the end‑to‑end workflow & architecture, open in a browser
 ```
@@ -95,7 +96,7 @@ ap-invoice-doc-classfn-vendor-analysis/
                                                           ▼
       ┌──────────────────────────── dashboard/ (React) ────────────────────────────┐
       │  Get Data gate → dataSource.getData({kind, scenario, tenantId, from, to})   │
-      │     • kind = 'regular'  (Daily Data Review)  → the full daily set           │
+      │     • kind = 'regular'  (Regular DA Analysis)  → the full daily set           │
       │     • kind = 'mismatch' (Mismatch Review)    → customer-edit scenarios       │
       │  → Analysis / Reviewed / Metrics tabs, live review, exports, Email Sender    │
       └────────────────────────────────────────────────────────────────────────────┘
@@ -125,7 +126,7 @@ Open the URL Vite prints (e.g. `http://localhost:5173`). You'll land on the **Ge
 On a fresh clone there are no datasets yet — first [run the pipeline](#pulling-data-for-a-tenant) to
 create one (or use **upload an Excel file instead** on the gate). Once a dataset is present:
 
-1. Choose **Daily Data Review** or **Mismatch review**.
+1. Choose **Regular DA Analysis** or **Mismatch review**.
 2. Pick a **Tenant Name** (populated from `public/data/manifest.json`).
 3. (Mismatch only) choose **which mismatches** — All / Entity Name / Vendor Name / Record Type.
 4. Adjust the **Created From/To** range (pre‑filled to the dataset's coverage).
@@ -161,7 +162,7 @@ cd data-fetching
 pip install -r requirements.txt
 # 1) fill your PASSWORD in .env (USERNAME defaults to the configured account)
 # 2) set the tenant id(s) + date range at the top of the script, then:
-python3 ap_invoice_data.py             # Daily Data Review dataset
+python3 ap_invoice_data.py             # Regular DA Analysis dataset
 python3 ap_invoice_mismatch_data.py    # Mismatch Review dataset
 # 3) copy the resulting .xlsx into ../dashboard/public/data/
 # 4) add/adjust an entry in ../dashboard/public/data/manifest.json (tenant, dates, counts)
@@ -190,7 +191,7 @@ attachments by `s3_key`). Requires the email backend running.
 
 Chosen at the **Get Data** gate:
 
-- **Daily Data Review** (`kind: regular`) — the full daily document set for a tenant + date range.
+- **Regular DA Analysis** (`kind: regular`) — the full daily document set for a tenant + date range.
   Review classification + vendor matching as usual.
 
 - **Mismatch Review** (`kind: mismatch`) — the customer‑edit set from `wk_result_edits`, where

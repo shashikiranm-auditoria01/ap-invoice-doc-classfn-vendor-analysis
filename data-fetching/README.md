@@ -6,10 +6,10 @@ dashboard reads. `app_def_code = 'VIDE'` (the AP‑Invoice application code) is 
 
 > **How fetching works today vs later.**
 > - **Now:** we fetch through the **Metabase API** — `ap_invoice_data.py` / `ap_invoice_mismatch_data.py`
->   run the SQL against Metabase. **`query.md` is that SQL** (the customer‑edit mismatch query) with a
+>   run the SQL against Metabase. **`queries/mismatch_review.sql` is that SQL** (the customer‑edit mismatch query) with a
 >   plain‑English explanation of the three scenarios — it is the source‑of‑truth query, not a stray doc.
 > - **Later:** we may switch to a **direct prod‑DB connection**. Only the connection + execution layer
->   changes — the same `query.md` SQL and the same output `.xlsx` shape (and the dashboard) stay put.
+>   changes — the same `queries/mismatch_review.sql` SQL and the same output `.xlsx` shape (and the dashboard) stay put.
 >   The dashboard also has a `VITE_DATA_API_URL` seam so it can call a live backend instead of reading
 >   the generated `.xlsx` (see the top‑level README).
 
@@ -57,9 +57,10 @@ change. **AWS attachments:** set `S3_BUCKET` + AWS creds and the details panel c
 | `ap_invoice_data.py` | `AP_Invoice_Tenant_<id>.xlsx` — classification + vendor + SOR columns | **Regular DA Analysis** (`kind: regular`) |
 | `ap_invoice_mismatch_data.py` | `AP_Invoice_Mismatch_Report.xlsx` — one sheet per scenario (`RecordType_Mismatch`, `VendorName_Mismatch`, …) | **Mismatch Review** (`kind: mismatch`) |
 | `server.py` | **Live backend** — the endpoints the dashboard calls (no `.xlsx` step) | both (live) |
-| `query.md` | the customer‑edit mismatch SQL + a plain‑English explanation of the 3 scenarios | reference |
+| `queries/mismatch_review.sql` | the customer‑edit mismatch SQL + a plain‑English explanation of the 3 scenarios | reference |
+| `smoke_test.py` | backend smoke test (MOCK mode — 11 checks, no credentials) | test |
 | `sample_metabase_script.py` | minimal Metabase auth/query example | reference |
-| `.env` | your `USERNAME` / `PASSWORD` (committed **empty**) | credentials |
+| `.env` | Metabase creds (`USERNAME_REGULAR`/`PASSWORD_REGULAR`/…) + optional `DB_URL`, `S3_BUCKET` — committed **empty** | credentials |
 
 ## 1. Install
 
@@ -100,13 +101,13 @@ QUERY_DATE_TO   = '2026-06-18 23:59:59'
 ALL_TENANT_IDS  = ['665247456933969920']   # one or more 18-digit tenant IDs
 ```
 
-For a single tenant you can copy `pull_tenant_674288818571972608.py` and change `TARGET_TENANT` +
-the date range.
+For a single tenant, the simplest path is to set `TENANT_ID=<id>` in `.env` — it overrides
+`ALL_TENANT_IDS` at run time, so you don't need to edit the script.
 
 ## 4. Run
 
 ```bash
-python3 ap_invoice_data.py           # → AP_Invoice_Tenant_<id>.xlsx  (Daily Data Review)
+python3 ap_invoice_data.py           # → AP_Invoice_Tenant_<id>.xlsx  (Regular DA Analysis)
 python3 ap_invoice_mismatch_data.py  # → AP_Invoice_Mismatch_Report.xlsx  (Mismatch Review)
 ```
 
@@ -153,7 +154,7 @@ SOR post‑processing, formats dates, and writes the `.xlsx`.
 
 3. Reload the dashboard — the new tenant/dataset now appears in the gate.
 
-## The three mismatch scenarios (from `query.md`)
+## The three mismatch scenarios (from `queries/mismatch_review.sql`)
 
 Customer edits come from `sor.wk_result_edits`: `original_json` = the value AAI/NLU produced,
 `final_json` = the value the customer edited to. The report has one sheet per scenario:
