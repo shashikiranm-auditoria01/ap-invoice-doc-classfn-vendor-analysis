@@ -112,8 +112,10 @@ export function ExcelUploader({ onUpload, onClose }: ExcelUploaderProps) {
             if (scenario) sheetRows.forEach(r => { r[SHEET_SCENARIO_KEY] = scenario; });
             allRows.push(...sheetRows);
 
-            // Check for Reviewed column
-            if (sheetRows.length > 0 && Object.keys(sheetRows[0]).includes('Reviewed')) {
+            // Check for a "Reviewed" column (resume file). Scan all rows case/space-insensitively —
+            // sheet_to_json omits keys for blank cells, so the header may be absent from row[0], and
+            // a header of "reviewed"/"Reviewed " must still be recognized so saved reviews restore.
+            if (sheetRows.some(r => Object.keys(r).some(k => k.trim().toLowerCase() === 'reviewed'))) {
               hasReviewedColumn = true;
             }
           }

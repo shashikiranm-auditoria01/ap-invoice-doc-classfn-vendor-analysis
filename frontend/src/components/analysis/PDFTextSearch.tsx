@@ -81,7 +81,10 @@ export function PDFTextSearch({ text, onHighlightChange }: PDFTextSearchProps) {
   const highlightContext = (context: string): React.ReactNode => {
     if (!searchTerm) return context;
     
-    const parts = context.split(new RegExp(`(${searchTerm})`, 'gi'));
+    // Escape regex metacharacters — a search term like "(USD" must not compile to an invalid
+    // RegExp (which would throw during render and white-screen the panel).
+    const escaped = searchTerm.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const parts = context.split(new RegExp(`(${escaped})`, 'gi'));
     
     return parts.map((part, i) => 
       part.toLowerCase() === searchTerm.toLowerCase() ? (

@@ -1,7 +1,6 @@
 import { useMemo } from 'react';
 import { FileText, Target, Users, BarChart3, AlertTriangle, Download } from 'lucide-react';
 import { useAppContext } from '../context/AppContext';
-import { canonicalVendorMatch } from '../utils/reviewStatus';
 import { computeReviewKpis } from '../utils/reviewMetrics';
 import { exportMetricsReport } from '../utils/docClassificationExport';
 

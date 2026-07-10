@@ -248,12 +248,24 @@ def list_databases(url, token):
 # Core query executor
 # ─────────────────────────────────────────────────────────────────────────────
 
+# Snowflake ID columns: keep as text end-to-end. Building the DataFrame with dtype=object (not the
+# default per-column inference) prevents a NULL turning an ID column into float64 — which would
+# corrupt the 18-digit IDs at read time, before any export.
+_ID_COLS = ('Document ID', 'Tenant ID', 'Message ID', 'Edit Message ID', 'vendorid')
+
+def _build_df(rows, cols):
+    df = pd.DataFrame(rows, columns=cols, dtype=object)
+    for c in _ID_COLS:
+        if c in df.columns:
+            df[c] = df[c].apply(lambda v: '' if v is None or (isinstance(v, float) and pd.isna(v)) else str(v))
+    return df
+
 def _parse_df(result):
     if 'cols' in result and 'rows' in result:
-        return pd.DataFrame(result['rows'], columns=[c['name'] for c in result['cols']])
+        return _build_df(result['rows'], [c['name'] for c in result['cols']])
     d = result.get('data', {})
     if 'cols' in d and 'rows' in d:
-        return pd.DataFrame(d['rows'], columns=[c['name'] for c in d['cols']])
+        return _build_df(d['rows'], [c['name'] for c in d['cols']])
     return None
 
 
@@ -759,9 +771,15 @@ def save_to_excel(df, filename, truncate=True):
     to_save = _truncate_for_csv(df) if truncate else df.copy()
     ID_COLS = ['Document ID', 'Tenant ID', 'Message ID', 'vendorid']
     def id_str(x):
-        if pd.isna(x) or str(x) == 'nan': return ''
-        try: return str(int(float(x)))
-        except: return str(x)
+        # Snowflake IDs are 18 digits; float() loses precision above 2^53 and corrupts ~all of
+        # them, so NEVER route an ID through float(). Normalise to the exact digit string instead.
+        if x is None: return ''
+        if isinstance(x, float):
+            if pd.isna(x): return ''
+            return '%.0f' % x  # last-resort integral formatting (dtype=str at read keeps IDs off this)
+        s = str(x).strip()
+        if s in ('', 'nan', 'NaN', 'None', '<NA>'): return ''
+        return s[:-2] if s.endswith('.0') and s[:-2].isdigit() else s
     for col in ID_COLS:
         if col in to_save.columns: to_save[col] = to_save[col].apply(id_str)
     total = len(to_save)

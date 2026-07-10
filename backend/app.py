@@ -112,6 +112,17 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True,
 # ── SQL execution: Metabase today, prod DB when DB_URL is set ─────────────────────────────────────
 _mb_tokens: dict = {}  # instance name → session token cache
 
+# 18-digit Snowflake IDs must be returned to the JS frontend as strings — as JSON numbers they
+# exceed 2^53 and get silently rounded. Stringify these known ID-named columns in every row dict.
+_ID_KEYS = {"Document ID", "Tenant ID", "Message ID", "Edit Message ID", "vendorid",
+            "AAI entityID", "Customer entityID", "aaiEntityId"}
+
+def _stringify_ids(d: dict) -> dict:
+    for k, v in d.items():
+        if k in _ID_KEYS and v is not None and not isinstance(v, str):
+            d[k] = str(v)  # Python ints are arbitrary-precision here → exact digits preserved
+    return d
+
 def _mb_login(inst: dict) -> Optional[str]:
     if not inst["user"] or not inst["pw"]:
         return None
@@ -138,8 +149,10 @@ def _mb_query(inst: dict, db_id: int, sql: str) -> list[dict]:
     if r.status_code not in (200, 202):
         return []
     d = r.json().get("data", {})
-    cols = [c.get("display_name") or c.get("name") for c in d.get("cols", [])]
-    return [dict(zip(cols, row)) for row in d.get("rows", [])]
+    # Key rows off the raw SQL alias (c['name']); Metabase humanizes display_name
+    # ("created_at" → "Created At"), which breaks the frontend/extraction parsers.
+    cols = [c.get("name") or c.get("display_name") for c in d.get("cols", [])]
+    return [_stringify_ids(dict(zip(cols, row))) for row in d.get("rows", [])]
 
 def _mb_databases(inst: dict) -> list[int]:
     tok = _mb_login(inst)
@@ -184,7 +197,7 @@ def run_sql(sql: str, tenant_id: Optional[str] = None) -> list[dict]:
             raise RuntimeError("No prod DB configured — set DB_URL or TENANT_DB_MAP in .env")
         with _engine_for(dsn).connect() as conn:
             res = conn.execute(text(sql))
-            return [dict(r._mapping) for r in res]
+            return [_stringify_ids(dict(r._mapping)) for r in res]
     # Metabase path — try each instance's SOR/shard DBs until one returns rows.
     for inst in METABASE_INSTANCES:
         for db_id in _mb_databases(inst):
@@ -248,10 +261,12 @@ def get_data(req: GetDataRequest):
            .replace("TENANT_PLACEHOLDER", req.tenant_id))
     if req.kind == "mismatch" and req.scenario and req.scenario != "all":
         extra = _SCENARIO_WHERE.get(req.scenario, "")
-        # Inject the scenario predicate before the trailing ORDER BY (defensive: only if present).
-        if extra and "ORDER BY" in sql:
-            head, _, tail = sql.rpartition("ORDER BY")
-            sql = head + extra + " ORDER BY " + tail
+        # Inject the scenario predicate into the INNER subquery's WHERE (it references swre), i.e.
+        # right before the `) x` that closes the subquery — NOT after it / before the outer ORDER BY,
+        # where `swre` is out of scope. The template has exactly one `) x`.
+        if extra and ") x" in sql:
+            head, _, tail = sql.rpartition(") x")
+            sql = head + extra + "\n) x" + tail
     try:
         rows = run_sql(sql, tenant_id=req.tenant_id)
     except Exception as e:  # noqa: BLE001 — surface any driver/Metabase error to the client
@@ -270,7 +285,9 @@ class SorRequest(BaseModel):
     lookups: list[SorLookup]
 
 def _esc(v: Optional[str]) -> str:
-    return (v or "").replace("'", "''")
+    # Escape backslash FIRST (else it re-escapes the '' below), then the single quote, for MySQL
+    # string literals. Vendor names are document-derived, so they must be neutralised too.
+    return (v or "").replace("\\", "\\\\").replace("'", "''")
 
 def _sor_rows(tenant_id: str, vendor: str, table: str) -> str:
     """Return the JSON-array literal string for a vendor's SOR matches, shaped like the .xlsx cell."""
@@ -290,6 +307,9 @@ def _sor_rows(tenant_id: str, vendor: str, table: str) -> str:
 
 @app.post("/api/sor/lookup")
 def sor_lookup(req: SorRequest):
+    # Validate the tenant id like /api/get_data does — it is interpolated into SQL string literals.
+    if not _TENANT_RE.match(req.tenantId or ""):
+        raise HTTPException(status_code=400, detail="tenantId must be numeric (18-digit snowflake).")
     out: dict = {}
     for lk in req.lookups:
         norm, ext = lk.normalizedVendorName, lk.extractedVendorName

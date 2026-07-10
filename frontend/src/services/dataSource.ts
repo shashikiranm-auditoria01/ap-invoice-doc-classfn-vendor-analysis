@@ -99,7 +99,7 @@ export function parseWorkbookBuffer(buffer: ArrayBuffer): DocClassificationDocum
       for (const [k, v] of Object.entries(raw)) row[norm.get(k.trim().toLowerCase()) ?? k.trim()] = v;
       // Same numeric-ID guard the uploader enforces: an 18-digit ID stored as a NUMBER cell was
       // already rounded past 2^53 by SheetJS and can't be recovered as a string.
-      for (const col of ['Document ID', 'Message ID', 'Tenant ID', 'vendorid']) {
+      for (const col of ['Document ID', 'Message ID', 'Tenant ID', 'vendorid', 'Edit Message ID', 'AAI entityID', 'Customer entityID']) {
         if (typeof row[col] === 'number' && Math.abs(row[col] as number) >= 1e15) idNumericColumns.add(col);
       }
       const doc = parseDocClassificationRow(row);

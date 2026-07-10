@@ -46,6 +46,7 @@ export function DocClassificationPage() {
     reviewedDocClassifications,
     addReviewedDocClassification,
     removeReviewedDocClassification,
+    removeReviewedDocClassifications,
     clearReviewedDocClassifications,
     isDocClassificationReviewed,
     docClassificationPdfFiles,
@@ -519,10 +520,12 @@ export function DocClassificationPage() {
     
     if (!docS3Id) return null;
 
-    // Find matching PDF by comparing the extracted IDs
+    // Find matching PDF by comparing the extracted IDs (case-insensitive — S3 keys/UUIDs may differ
+    // in case between the zip entry name and the stored S3 location).
+    const docS3IdLc = docS3Id.toLowerCase();
     return docClassificationPdfFiles.find(pdf => {
-      const pdfId = extractIdFromPdfFilename(pdf.name);
-      return pdfId === docS3Id;
+      const pdfId = extractIdFromPdfFilename(pdf.name).toLowerCase();
+      return pdfId === docS3IdLc;
     });
   }, [currentDoc, docClassificationPdfFiles]);
 
@@ -685,14 +688,16 @@ export function DocClassificationPage() {
       });
     }
 
-    if (reviewStatusFilter !== 'not_reviewed') {
+    if (reviewStatusFilter === 'user_reviewed' || reviewStatusFilter === 'all') {
       // In 'user_reviewed' or 'all' mode: doc stays visible after save, so explicitly advance
       if (safeIndex < filteredDocs.length - 1) {
         setCurrentIndex(safeIndex + 1);
       }
       // If already at last doc, stay in place
     } else {
-      // Normal mode: reviewed doc is filtered out, so next doc slides into safeIndex automatically.
+      // 'not_reviewed' OR 'skipped' mode: marking reviewed drops the doc out of the visible list
+      // (it leaves the skipped set and enters user-reviewed), so the next doc slides into safeIndex
+      // automatically — advancing here too would skip a document. Only adjust at the last position.
       // Only adjust if we're at the last document.
       if (filteredDocs.length === 1) {
         // Last document - stay at index 0 (will show "no docs" or move to first unreviewed)
@@ -1447,7 +1452,7 @@ export function DocClassificationPage() {
           reviewedDocs={reviewedDocsForSheet}
           allDocs={docClassificationData}
           onRemove={removeReviewedDocClassification}
-          onClearAll={clearReviewedDocClassifications}
+          onClearAll={() => removeReviewedDocClassifications(reviewedDocsForSheet.map(d => d.documentId))}
           onClose={() => setShowReviewedPanel(false)}
         />
       )}

@@ -363,7 +363,9 @@ export function exportAllDocClassifications(
 
   const dataRows: CellDef[][] = allDocs.map(doc => {
     const reviewed = reviewedMap.get(doc.documentId);
-    const isReviewed = !!reviewed;
+    // A review only counts when isAnInvoice is set — matches ReviewedPage, the Analysis page,
+    // and isDocClassificationReviewed. An incomplete review must not export as Reviewed=Yes.
+    const isReviewed = !!reviewed && !!reviewed.isAnInvoice;
 
     const origValues: (string | number)[] = [
       doc.documentId,

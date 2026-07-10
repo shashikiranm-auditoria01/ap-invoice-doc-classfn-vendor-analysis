@@ -454,7 +454,7 @@ export function DocClassificationDetailsPanel({
                   </div>
                   <Row label="Record Type" aai={document.aaiRecordType || document.originalRecordType || ''} cust={document.customerRecordType || document.finalRecordType || ''} mismatch={edits.recordType} />
                   <Row label="Entity Name" aai={document.aaiEntityName || ''} cust={document.customerEntityName || ''} mismatch={edits.entityName} />
-                  <Row label="Entity ID" aai={document.aaiEntityId || ''} cust={document.customerEntityId || ''} mismatch={edits.entityName} />
+                  <Row label="Entity ID" aai={document.aaiEntityId || ''} cust={document.customerEntityId || ''} mismatch={(document.aaiEntityId || '').trim() !== (document.customerEntityId || '').trim()} />
                   {/* Vendor Name edit = AAI original NLU vendor → the resolved record vendor
                       (`vendorName`), matching the pipeline's mismatch definition and the "Customer
                       VendorName" card above. NOT customerVendorName (final_json.vendorName), which for

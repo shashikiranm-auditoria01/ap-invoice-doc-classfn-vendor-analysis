@@ -56,13 +56,14 @@ export function matchPdfToDocument(
   pdfFilename: string,
   documents: Document[]
 ): Document | null {
-  const pdfId = extractIdFromPdfFilename(pdfFilename);
-  
+  const pdfId = extractIdFromPdfFilename(pdfFilename).toLowerCase();
+
   if (!pdfId) return null;
-  
-  // Find document where the primary S3 ID matches the PDF ID
+
+  // Find document where the primary S3 ID matches the PDF ID (case-insensitive: S3 keys/UUIDs may
+  // differ in case between the zip entry name and the stored S3 location).
   for (const doc of documents) {
-    const docS3Id = getPrimaryS3Id(doc);
+    const docS3Id = getPrimaryS3Id(doc).toLowerCase();
     if (docS3Id === pdfId) {
       return doc;
     }
