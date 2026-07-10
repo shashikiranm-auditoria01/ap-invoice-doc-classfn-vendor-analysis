@@ -447,26 +447,23 @@ export function DocClassificationPage() {
     return docsWithMatchingPdfs;
   }, [docsWithMatchingPdfs, reviewedDocClassifications, reviewStatusFilter, skippedDocIds]);
 
-  // Reviewed docs shown in the Reviewed sheet and export:
-  // - Only include complete reviews (isAnInvoice must be set)
-  // - When PDFs are uploaded, include docs whose PDF matched (including formerly "corrupted" ones)
-  const reviewedDocsForSheet = useMemo(() => {
-    const completeReviews = reviewedDocClassifications.filter(doc => !!doc.isAnInvoice);
-    if (docClassificationPdfFiles.length === 0) return completeReviews;
-
-    const allPdfIds = new Set(
-      docClassificationPdfFiles
-        .map(pdf => extractIdFromPdfFilename(pdf.name))
+  // Skipped count scoped to the currently-visible (filtered) set, so the badges match what the
+  // Skipped tab actually lists (a filter that excludes a skipped doc drops it from the count too).
+  const skippedVisibleCount = useMemo(() => {
+    const userReviewedIds = new Set(
+      reviewedDocClassifications.filter(r => !!r.isAnInvoice && !r.isAutoReviewed).map(r => r.documentId)
     );
+    return docsWithMatchingPdfs.filter(d => skippedDocIds.has(d.documentId) && !userReviewedIds.has(d.documentId)).length;
+  }, [docsWithMatchingPdfs, skippedDocIds, reviewedDocClassifications]);
 
-    return completeReviews.filter(doc => {
-      const s3Path = doc.extractedFileS3Location?.trim()
-        ? doc.extractedFileS3Location
-        : doc.s3Location;
-      if (!s3Path?.trim()) return false;
-      return allPdfIds.has(extractIdFromS3Location(s3Path));
-    });
-  }, [reviewedDocClassifications, docClassificationPdfFiles]);
+  // Reviewed docs shown in the Reviewed sheet, the "Reviewed N" badge, and "Download Reviewed Only".
+  // Scope to the CURRENTLY LOADED dataset (complete reviews whose documentId is in this dataset) so
+  // reviews from other tenants/datasets can't leak in — matching the Reviewed tab. Note: this is NOT
+  // narrowed to PDF-matched docs (uploading a few PDFs must not make it look like reviews vanished).
+  const reviewedDocsForSheet = useMemo(() => {
+    const ids = new Set(docClassificationData.map(d => d.documentId));
+    return reviewedDocClassifications.filter(doc => !!doc.isAnInvoice && ids.has(doc.documentId));
+  }, [reviewedDocClassifications, docClassificationData]);
 
   // Apply search filter
   const filteredDocs = useMemo(() => {
@@ -533,7 +530,7 @@ export function DocClassificationPage() {
 
   // Active filter count
   const activeFilterCount = [
-    selectedVendors.length > 0,
+    selectedVendors.length > 0 && vendorFilterMode !== null,
     selectedVendorMatchStatus.length > 0,
     selectedRecordMatchStatus.length > 0,
     selectedFinalRecordType.length > 0,
@@ -733,6 +730,7 @@ export function DocClassificationPage() {
       clearDocClassificationData();
       setCurrentIndex(0);
       setSearchQuery('');
+      setSkippedDocIds(new Set());
       clearFilters();
     }
   };
@@ -741,6 +739,7 @@ export function DocClassificationPage() {
     if (confirm('Clear all session data (PDFs + reviewed documents)?')) {
       clearDocClassificationPdfFiles();
       clearReviewedDocClassifications();
+      setSkippedDocIds(new Set());
       setCurrentIndex(0);
     }
   };
@@ -749,6 +748,7 @@ export function DocClassificationPage() {
     clearDocClassificationData();
     clearReviewedDocClassifications();
     clearDocClassificationPdfFiles();
+    setSkippedDocIds(new Set());
     toast.success('All local data cleared.');
     setShowDeleteConfirm(false);
   };
@@ -834,7 +834,7 @@ export function DocClassificationPage() {
           </div>
           <div className="flex items-center gap-1.5">
             {/* Skipped Count Badge */}
-            {skippedDocIds.size > 0 && (
+            {skippedVisibleCount > 0 && (
               <button
                 onClick={() => { setReviewStatusFilter('skipped'); setShowFilters(true); }}
                 className="flex items-center gap-1 px-1.5 py-0.5 bg-slate-100 border border-slate-300 rounded hover:bg-slate-200 transition-colors"
@@ -842,7 +842,7 @@ export function DocClassificationPage() {
               >
                 <SkipForward className="w-3 h-3 text-slate-500" />
                 <span className="text-xs font-medium text-slate-600">
-                  Skipped: {skippedDocIds.size}
+                  Skipped: {skippedVisibleCount}
                 </span>
               </button>
             )}
@@ -988,7 +988,7 @@ export function DocClassificationPage() {
                     label: 'User Reviewed',
                     count: userReviewedInDatasetCount,
                   },
-                  { value: 'skipped', label: 'Skipped', count: skippedDocIds.size },
+                  { value: 'skipped', label: 'Skipped', count: skippedVisibleCount },
                   { value: 'all', label: 'All', count: null },
                 ] as const
               ).map(tab => {

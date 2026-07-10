@@ -61,35 +61,6 @@ function getColumnWidths<T extends Record<string, unknown>>(data: T[]): XLSX.Col
 
 
 /**
- * Format document metrics data for export
- */
-export function formatDocMetricsForExport(doc: Record<string, unknown>): Record<string, unknown> {
-  return {
-    'Document ID': doc.documentId,
-    'Message ID': doc.messageId,
-    'Tenant Name': doc.tenantName,
-    'Tenant ID': doc.tenantId,
-    'Created At': doc.createdAt instanceof Date 
-      ? doc.createdAt.toISOString() 
-      : doc.createdAt,
-    'Updated At': doc.updatedAt instanceof Date 
-      ? doc.updatedAt.toISOString() 
-      : doc.updatedAt,
-    'On UI': doc.onUI,
-    'Reason for Dismissal': doc.reasonForDismissal || '',
-    'Written': doc.written,
-    'Final Record Type': doc.finalRecordType,
-    'Original Record Type': doc.originalRecordType || '',
-    'Invoice #': doc.invoiceNumber || '',
-    'Vendor ID': doc.vendorId || '',
-    'Final Vendor Name': doc.finalVendorName || '',
-    'Original Vendor Name': doc.originalVendorName || '',
-    'S3 Location': doc.s3Location,
-  };
-}
-
-
-/**
  * Export unique final values from the edited_value column for a given edited_field_name to Excel.
  * Final values = values in edited_value. One column "Edited Value", one row per unique value.
  */

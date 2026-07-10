@@ -171,7 +171,7 @@ export function DocClassificationMetricsPage() {
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
               <KpiCard label="Total Documents" value={m.total.toLocaleString()} sub={isMismatch ? 'In this mismatch set' : 'In this dataset'} gradient="bg-gradient-to-br from-indigo-500 to-purple-500" />
               <KpiCard label="Reviewed Documents" value={m.reviewedCount.toLocaleString()} sub={`${m.reviewProgress}% dispositioned · ${m.userReviewedCount} by you · ${m.autoReviewed} auto`} gradient="bg-gradient-to-br from-emerald-600 to-green-500" />
-              <KpiCard label="Doc Classfn Accuracy" value={m.hasUserReviews ? `${m.docAccuracy}%` : '—'} sub={m.hasUserReviews ? `of ${m.userReviewedCount} you reviewed` : 'review documents to populate'} gradient="bg-gradient-to-br from-blue-600 to-blue-400" />
+              <KpiCard label="Doc Classfn Accuracy" value={m.hasUserReviews ? `${m.docAccuracy.toFixed(1)}%` : '—'} sub={m.hasUserReviews ? `of ${m.userReviewedCount} you reviewed` : 'review documents to populate'} gradient="bg-gradient-to-br from-blue-600 to-blue-400" />
               <KpiCard label="Vendor Matching Accuracy" value={m.hasVendorReviews ? `${m.vendorAccuracy.toFixed(1)}%` : '—'} sub={m.hasVendorReviews ? `of ${m.vendorReviewedCount} invoices you reviewed` : 'review invoices to populate'} gradient="bg-gradient-to-br from-amber-500 to-orange-500" />
             </div>
 
@@ -260,7 +260,7 @@ export function DocClassificationMetricsPage() {
                       <tr key={t.name} className="border-b border-slate-100 last:border-0">
                         <td className="px-4 py-3 text-slate-800">{t.name}</td>
                         <td className="px-4 py-3 text-center"><IssuePill count={t.docIssues} total={t.userReviewed} kind="doc" /></td>
-                        <td className="px-4 py-3 text-center"><IssuePill count={t.vendorIssues} total={t.userReviewed} kind="vendor" /></td>
+                        <td className="px-4 py-3 text-center"><IssuePill count={t.vendorIssues} total={t.vendorReviewed} kind="vendor" /></td>
                       </tr>
                     ))}
                   </tbody>

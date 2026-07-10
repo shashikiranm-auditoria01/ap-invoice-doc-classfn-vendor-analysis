@@ -90,25 +90,45 @@ export function parseWorkbookBuffer(buffer: ArrayBuffer): DocClassificationDocum
 
   // Parse sheet-by-sheet so each row can be tagged with its sheet's mismatch scenario.
   const byId = new Map<string, DocClassificationDocument>();
+  const idNumericColumns = new Set<string>();
   for (const sheetName of workbook.SheetNames) {
     const scenario = scenarioForSheet(sheetName);
     const rawRows = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName]) as Record<string, unknown>[];
     for (const raw of rawRows) {
       const row: Record<string, unknown> = {};
       for (const [k, v] of Object.entries(raw)) row[norm.get(k.trim().toLowerCase()) ?? k.trim()] = v;
+      // Same numeric-ID guard the uploader enforces: an 18-digit ID stored as a NUMBER cell was
+      // already rounded past 2^53 by SheetJS and can't be recovered as a string.
+      for (const col of ['Document ID', 'Message ID', 'Tenant ID', 'vendorid']) {
+        if (typeof row[col] === 'number' && Math.abs(row[col] as number) >= 1e15) idNumericColumns.add(col);
+      }
       const doc = parseDocClassificationRow(row);
       if (!doc) continue;
       if (scenario) doc.mismatchScenarios = [scenario];
       const existing = byId.get(doc.documentId);
       if (existing) {
-        // Same doc in multiple scenario sheets → union the scenarios onto the first-seen row.
+        // Same doc in multiple scenario sheets → union the scenarios, and fill in any field the
+        // first-seen row left empty from this row (later scenario sheets can carry richer columns).
         if (scenario) {
           existing.mismatchScenarios = Array.from(new Set([...(existing.mismatchScenarios || []), scenario]));
+        }
+        const existingRec = existing as unknown as Record<string, unknown>;
+        for (const [k, v] of Object.entries(doc)) {
+          const cur = existingRec[k];
+          if ((cur === null || cur === undefined || cur === '') && v !== null && v !== undefined && v !== '') {
+            existingRec[k] = v;
+          }
         }
       } else {
         byId.set(doc.documentId, doc);
       }
     }
+  }
+  if (idNumericColumns.size > 0) {
+    throw new Error(
+      `Dataset has ID column(s) stored as numbers (${Array.from(idNumericColumns).join(', ')}), which corrupts ` +
+      `18-digit IDs. Re-export those columns as Text.`
+    );
   }
   return Array.from(byId.values());
 }

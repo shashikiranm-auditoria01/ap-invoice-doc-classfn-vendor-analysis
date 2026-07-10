@@ -41,13 +41,13 @@ function serializeJsonColumn(value: unknown): string {
 // ---------------------------------------------------------------------------
 
 // Column index ranges (0-based) used for background fills
-// Reviewed export: 47 columns total
+// Reviewed export: 48 columns total
 //   0-23:   original columns (white)
 //   24-36:  JSON/SOR/matching columns (amber)
-//   37-44:  review columns (green)
-//   45-46:  status columns (blue)
+//   37-45:  review columns (green, 9 cols incl. Review Source)
+//   46-47:  status columns (blue)
 
-// All-docs export: 48 columns total (same layout + 'Reviewed' at index 37, review cols 38-45, status 46-47)
+// All-docs export: 49 columns total (same layout + 'Reviewed' at index 37, review cols 38-46, status 47-48)
 
 const AMBER_FILL = { fgColor: { rgb: 'FFF3CD' } };
 const GREEN_FILL = { fgColor: { rgb: 'DCFCE7' } };
@@ -418,10 +418,13 @@ export function exportAllDocClassifications(
       reviewed.isAutoReviewed ? 'Yes' : 'No',
     ] : ['', '', '', '', '', '', '', '', ''];
 
-    const blueValues: (string | number)[] = isReviewed ? [
+    // Record Type Status is computable for EVERY doc (needs only original/final record type), so
+    // emit it for all rows — matching the on-screen Analysis filter/Details badge. Only the
+    // vendor "Computed" status depends on a review, so it stays review-gated.
+    const blueValues: (string | number)[] = [
       recordTypeStatus(doc.finalRecordType, doc.originalRecordType),
-      reviewVendorStatus(reviewed),
-    ] : ['', ''];
+      isReviewed ? reviewVendorStatus(reviewed) : '',
+    ];
 
     return [
       ...origValues.map((v, i) => makeCell(v, undefined, undefined, headers[i])),
