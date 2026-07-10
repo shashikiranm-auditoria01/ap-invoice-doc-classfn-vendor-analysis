@@ -43,9 +43,14 @@ from fastapi.responses import Response
 from pydantic import BaseModel
 import httpx
 
-# Reuse the REAL, source-of-truth SQL templates from the pull scripts (import is side-effect-free).
-from ap_invoice_data import SQL_QUERY_TEMPLATE as REGULAR_SQL_TEMPLATE
-from ap_invoice_mismatch_data import SQL_QUERY_TEMPLATE as MISMATCH_SQL_TEMPLATE
+# The REAL SQL templates live in the pull scripts; imported LAZILY inside get_data so the server
+# (and /api/health) start without pandas/requests installed — only the live pull path needs them.
+def _sql_templates():
+    from ap_invoice_data import SQL_QUERY_TEMPLATE as regular
+    from ap_invoice_mismatch_data import SQL_QUERY_TEMPLATE as mismatch
+    return regular, mismatch
+
+MOCK = os.environ.get("MOCK") == "1"  # smoke-test mode: return a tiny sample instead of querying
 
 # ── Config (from environment / .env) ─────────────────────────────────────────────────────────────
 def _load_env():
@@ -154,9 +159,28 @@ _SCENARIO_WHERE = {
     "entityName": " AND swre.original_json->>'$.aaiEntityId' != swre.final_json->>'$.aaiEntityId' ",
 }
 
+def _mock_rows(req: "GetDataRequest") -> list[dict]:
+    """A tiny, column-correct sample for MOCK=1 smoke tests (no Metabase/DB needed)."""
+    base = {
+        "Document ID": "855390894818852864", "created_at": "June 18, 2026, 10:18 AM",
+        "updated_at": "June 18, 2026, 10:18 AM", "Message ID": "855386140541718528",
+        "Tenant Name": "Mock Tenant", "Tenant ID": req.tenant_id, "On UI": "Active",
+        "Written": "Written", "Manual": "Manual", "Final Record Type": "Invoice",
+        "Original Record Type": "Invoice", "vendorname": "Acme Corp",
+        "OriginalVendorName": "Acme Corporation", "S3Location": "mock/tenant/doc.pdf",
+    }
+    if req.kind == "mismatch":
+        base.update({"AAI RecordType": "Invoice", "Customer RecordType": "VB_CREDIT_MEMO",
+                     "Customer vendorName": "Acme Corp LLC", "customer entity_name": "Acme Entity"})
+    return [base]
+
+
 @app.post("/api/get_data")
 def get_data(req: GetDataRequest):
-    template = MISMATCH_SQL_TEMPLATE if req.kind == "mismatch" else REGULAR_SQL_TEMPLATE
+    if MOCK:
+        return _mock_rows(req)
+    regular_sql, mismatch_sql = _sql_templates()
+    template = mismatch_sql if req.kind == "mismatch" else regular_sql
     sql = (template
            .replace("DATE_FROM_PLACEHOLDER", req.date_from)
            .replace("DATE_TO_PLACEHOLDER", req.date_to)
